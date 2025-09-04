@@ -11,12 +11,10 @@ gsap.registerPlugin(ScrollTrigger);
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
-  const [loading, setLoading] = useState(true); // State to track loading
+  const [loading, setLoading] = useState(true);
 
-  // --- 1. CONFIGURATION (CORRECTED) ---
-  const frameCount = 2500; // Corrected frame count 
+  const frameCount = 1037;
 
-  // Corrected path generation
   const getFrameUrl = (frame: number): string => {
     const frameNumber = String(frame).padStart(4, '0');
     return `/frames/frame_${frameNumber}.jpg`;
@@ -33,7 +31,6 @@ export default function Home() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    // --- 2. IMAGE PRELOADING (IMPROVED) ---
     const frameProxy = { frame: 0 };
     const images: HTMLImageElement[] = [];
 
@@ -53,9 +50,8 @@ export default function Home() {
     };
 
     preloadImages().then(() => {
-      setLoading(false); // Hide loading indicator
+      setLoading(false);
       
-      // --- 3. GSAP ANIMATION ---
       context.drawImage(images[0], 0, 0, canvas.width, canvas.height);
 
       gsap.to(frameProxy, {
@@ -67,7 +63,7 @@ export default function Home() {
           pin: true,
           scrub: 0.5,
           start: 'top top',
-          end: '+=6000', // Increased scroll distance for more frames
+          end: '+=6000',
         },
         onUpdate: () => {
           const frameIndex = Math.round(frameProxy.frame);
@@ -80,10 +76,9 @@ export default function Home() {
       });
     }).catch(error => {
       console.error("Failed to preload images:", error);
-      setLoading(false); // Also hide loading on error
+      setLoading(false);
     });
     
-    // --- 4. RESPONSIVENESS ---
     const handleResize = () => {
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
@@ -96,7 +91,6 @@ export default function Home() {
     
     window.addEventListener('resize', handleResize);
 
-    // --- 5. CLEANUP ---
     return () => {
       window.removeEventListener('resize', handleResize);
       ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
@@ -105,7 +99,6 @@ export default function Home() {
 
   return (
     <main>
-      {/* Optional: Add a loading indicator */}
       {loading && (
         <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'black', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
           <h1>Loading Assets...</h1>
@@ -114,10 +107,7 @@ export default function Home() {
       <section ref={sectionRef} className="h-screen relative">
         <canvas ref={canvasRef} className="w-full h-full" />
       </section>
-      {/* Add another section to create scrollable space */}
-      <section className="h-screen bg-gray-900 flex items-center justify-center">
-        <h2 className="text-white text-4xl">Scroll Down</h2>
-      </section>
+      {/* The extra section is removed to prevent scrolling after the animation ends. */}
     </main>
   );
 }
