@@ -1,69 +1,122 @@
 // app/page.tsx
 
-'use client'; // This must be a client component to use hooks and browser APIs.
+'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { ScrollTrigger } from 'gsap/ScrollTrigger';
 
-// Register the ScrollTrigger plugin with GSAP
 gsap.registerPlugin(ScrollTrigger);
 
 export default function Home() {
-  // Create typed refs for the video and the section that will be pinned
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
   const sectionRef = useRef<HTMLElement>(null);
+  const [loading, setLoading] = useState(true); // State to track loading
+
+  // --- 1. CONFIGURATION (CORRECTED) ---
+  const frameCount = 2500; // Corrected frame count 
+
+  // Corrected path generation
+  const getFrameUrl = (frame: number): string => {
+    const frameNumber = String(frame).padStart(4, '0');
+    return `/frames/frame_${frameNumber}.jpg`;
+  };
 
   useEffect(() => {
-    const video = videoRef.current;
+    const canvas = canvasRef.current;
     const section = sectionRef.current;
+    if (!canvas || !section) return;
 
-    // Safety check to make sure the elements are loaded
-    if (!video || !section) return;
+    const context = canvas.getContext('2d');
+    if (!context) return;
 
-    // We must wait for the video's metadata to load to get its actual duration.
-    const handleMetadataLoaded = () => {
-      // Create the scroll-based animation
-      gsap.to(video, {
-        // Animate the 'currentTime' property of the video
-        currentTime: video.duration,
-        ease: 'none', // Use a linear ease for a direct 1-to-1 scrub
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    // --- 2. IMAGE PRELOADING (IMPROVED) ---
+    const frameProxy = { frame: 0 };
+    const images: HTMLImageElement[] = [];
+
+    const preloadImages = () => {
+      const promises = [];
+      for (let i = 1; i <= frameCount; i++) {
+        const promise = new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = getFrameUrl(i);
+          images.push(img);
+        });
+        promises.push(promise);
+      }
+      return Promise.all(promises);
+    };
+
+    preloadImages().then(() => {
+      setLoading(false); // Hide loading indicator
+      
+      // --- 3. GSAP ANIMATION ---
+      context.drawImage(images[0], 0, 0, canvas.width, canvas.height);
+
+      gsap.to(frameProxy, {
+        frame: frameCount - 1,
+        snap: 'frame',
+        ease: 'none',
         scrollTrigger: {
-          trigger: section, // The element that triggers the animation
-          pin: true,        // Pin the trigger element while scrolling
-          start: 'top top', // Start the animation when the top of the section hits the top of the viewport
-          end: '+=3000',    // The animation will last for 3000px of scrolling. The longer this value, the slower the video plays.
-          scrub: true,      // This is the key part! It links the animation's progress directly to the scrollbar.
+          trigger: section,
+          pin: true,
+          scrub: 0.5,
+          start: 'top top',
+          end: '+=6000', // Increased scroll distance for more frames
+        },
+        onUpdate: () => {
+          const frameIndex = Math.round(frameProxy.frame);
+          const img = images[frameIndex];
+          if (img) {
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.drawImage(img, 0, 0, canvas.width, canvas.height);
+          }
         },
       });
+    }).catch(error => {
+      console.error("Failed to preload images:", error);
+      setLoading(false); // Also hide loading on error
+    });
+    
+    // --- 4. RESPONSIVENESS ---
+    const handleResize = () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      const frameIndex = Math.round(frameProxy.frame);
+      const img = images[frameIndex];
+      if (img && img.complete) {
+        context.drawImage(img, 0, 0, canvas.width, canvas.height);
+      }
     };
+    
+    window.addEventListener('resize', handleResize);
 
-    video.addEventListener('loadedmetadata', handleMetadataLoaded);
-
-    // --- CLEANUP ---
-    // This function runs when the component is unmounted to prevent memory leaks
+    // --- 5. CLEANUP ---
     return () => {
-      video.removeEventListener('loadedmetadata', handleMetadataLoaded);
-      // Kill all active ScrollTrigger instances
+      window.removeEventListener('resize', handleResize);
       ScrollTrigger.getAll().forEach((trigger) => trigger.kill());
     };
-  }, []); // The empty dependency array means this effect runs only once after the component mounts.
+  }, []);
 
   return (
     <main>
-      {/* This section acts as the container and the trigger for the animation.
-          ScrollTrigger will automatically handle its height and create the scroll distance
-          based on the 'end' property defined above. */}
+      {/* Optional: Add a loading indicator */}
+      {loading && (
+        <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'black', color: 'white', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 10 }}>
+          <h1>Loading Assets...</h1>
+        </div>
+      )}
       <section ref={sectionRef} className="h-screen relative">
-        <video
-          ref={videoRef}
-          // The path must be absolute from the 'public' folder.
-          src="/sat_tech_final.mp4"
-          playsInline
-          muted
-          // Ensure the video covers the entire section
-          className="w-full h-full object-cover"
-        />
+        <canvas ref={canvasRef} className="w-full h-full" />
+      </section>
+      {/* Add another section to create scrollable space */}
+      <section className="h-screen bg-gray-900 flex items-center justify-center">
+        <h2 className="text-white text-4xl">Scroll Down</h2>
       </section>
     </main>
   );
