@@ -7,25 +7,22 @@ import { gsap } from 'gsap';
 
 export default function Home() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const sectionRef = useRef<HTMLElement>(null);
   
   // Ref for the GSAP timeline
   const timelineRef = useRef<gsap.core.Timeline | null>(null);
+  // MODIFIED: Replaced boolean lock with a ref to hold the active tween instance
+  const activeTween = useRef<gsap.core.Tween | null>(null);
 
   const logoRef = useRef<HTMLImageElement>(null);
-  
-  // Refs for the clickable box containers
   const textRef1 = useRef<HTMLDivElement>(null);
   const textRef2 = useRef<HTMLDivElement>(null);
   const textRef3 = useRef<HTMLDivElement>(null);
   const textRef4 = useRef<HTMLDivElement>(null); 
 
   const [loading, setLoading] = useState(true);
-  // State to track the current animation section
   const [currentSection, setCurrentSection] = useState(0);
 
   const frameCount = 1037;
-  // Array of labels for navigation
   const labels = ["start", "section1", "section2", "section3", "end"];
 
   const getFrameUrl = (frame: number): string => {
@@ -43,7 +40,7 @@ export default function Home() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    const frameProxy = { frame: 0 };
+    let frameProxy = { frame: 0 };
     const images: HTMLImageElement[] = [];
 
     const preloadImages = () => {
@@ -64,7 +61,6 @@ export default function Home() {
     preloadImages().then(() => {
       setLoading(false);
 
-      // MODIFIED: Run the logo fade-in immediately, separate from the main timeline.
       gsap.to(logoRef.current, { opacity: 1, duration: 1.5, ease: 'power1.inOut' });
       
       const img = images[0];
@@ -85,28 +81,22 @@ export default function Home() {
       gsap.set(textRef3.current, { xPercent: 100, opacity: 0 });
       gsap.set(textRef4.current, { opacity: 0, scale: 0.9 }); 
 
-      // Create a master timeline, but start it in a paused state
       const tl = gsap.timeline({ paused: true });
       
-      // MODIFIED: Removed the initial fade-in from the main timeline.
-      // It now only controls the scroll/click-based animations.
       tl
-        .addLabel("start")
+        .addLabel("start", 0)
         .to(frameProxy, { frame: 148, ease: 'none', onUpdate: updateImage, duration: 2 })
         .to(logoRef.current, { opacity: 0, duration: 2 }, "<")
         .to(textRef1.current, { xPercent: 0, opacity: 1, duration: 1 }, "-=1")
         .addLabel("section1")
-
         .to(frameProxy, { frame: 270, ease: 'none', onUpdate: updateImage, duration: 2 })
         .to(textRef1.current, { xPercent: 100, opacity: 0, duration: 2 }, "<")
         .to(textRef2.current, { xPercent: 0, opacity: 1, duration: 2 }, "<")
         .addLabel("section2")
-        
         .to(frameProxy, { frame: 500, ease: 'none', onUpdate: updateImage, duration: 2 })
         .to(textRef2.current, { xPercent: -100, opacity: 0, duration: 2 }, "<")
         .to(textRef3.current, { xPercent: 0, opacity: 1, duration: 2 }, "<")
         .addLabel("section3")
-
         .to(frameProxy, { frame: frameCount - 1, ease: 'none', onUpdate: updateImage, duration: 3 })
         .to(textRef3.current, { xPercent: 100, opacity: 0, duration: 3 }, "<")
         .to(textRef4.current, { opacity: 1, scale: 1, duration: 3 }, "<")
@@ -119,18 +109,17 @@ export default function Home() {
       setLoading(false);
     });
     
-    const updateImageOnResize = () => {
-      const frameIndex = Math.round(frameProxy.frame);
-      const img = images[frameIndex];
-      if (img && img.complete) {
-        context.drawImage(img, 0, 0, canvas.width, canvas.height);
-      }
-    };
-    
+    // This logic remains the same
     const handleResize = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      updateImageOnResize();
+      if (canvasRef.current && context) {
+        canvasRef.current.width = window.innerWidth;
+        canvasRef.current.height = window.innerHeight;
+        const frameIndex = Math.round(frameProxy.frame);
+        const img = images[frameIndex];
+        if (img && img.complete) {
+          context.drawImage(img, 0, 0, canvasRef.current.width, canvasRef.current.height);
+        }
+      }
     };
     
     window.addEventListener('resize', handleResize);
@@ -138,24 +127,54 @@ export default function Home() {
     return () => {
       window.removeEventListener('resize', handleResize);
       timelineRef.current?.kill();
+      // Kill the tween too on cleanup
+      activeTween.current?.kill();
     };
   }, []);
 
-  const handleNext = () => {
-    if (currentSection < labels.length - 1) {
-      const nextSectionIndex = currentSection + 1;
-      setCurrentSection(nextSectionIndex);
-      timelineRef.current?.tweenTo(labels[nextSectionIndex], { duration: 1.5, ease: 'power1.inOut' });
+  // REFACTORED: A single, robust function to handle all navigation
+  const navigateToSection = (sectionIndex: number) => {
+    // Boundary check
+    if (sectionIndex < 0 || sectionIndex >= labels.length) {
+      return;
     }
-  };
-  
-  const handlePrev = () => {
-    if (currentSection > 0) {
-      const prevSectionIndex = currentSection - 1;
-      setCurrentSection(prevSectionIndex);
-      timelineRef.current?.tweenTo(labels[prevSectionIndex], { duration: 1.5, ease: 'power1.inOut' });
+
+    // If a tween is active, kill it. This prevents overlaps and stuck states.
+    if (activeTween.current && activeTween.current.isActive()) {
+      activeTween.current.kill();
     }
+    
+    setCurrentSection(sectionIndex);
+
+    // Create the new tween and store it in our ref
+    activeTween.current = timelineRef.current!.tweenTo(labels[sectionIndex], { 
+      duration: 1.5, 
+      ease: 'power1.inOut'
+    });
   };
+
+  useEffect(() => {
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      // Check if a tween is currently active before starting a new one.
+      if (activeTween.current && activeTween.current.isActive()) {
+        return;
+      }
+      
+      // Scrolling up
+      if (e.deltaY < 0) {
+        navigateToSection(currentSection + 1); // Go to next section
+      // Scrolling down
+      } else if (e.deltaY > 0) {
+        navigateToSection(currentSection - 1); // Go to previous section
+      }
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+    };
+  }, [currentSection]); // IMPORTANT: Rerun this effect when currentSection changes
 
   return (
     <main>
@@ -164,73 +183,57 @@ export default function Home() {
           <h1>Loading Assets...</h1>
         </div>
       )}
-      <section 
-        ref={sectionRef} 
-        className="h-screen relative overflow-hidden bg-black"
-        style={{ perspective: '800px' }} 
-      >
+      <section className="h-screen relative overflow-hidden bg-black" style={{ perspective: '800px' }}>
         <canvas ref={canvasRef} className="w-full h-full" />
         
         <img
           ref={logoRef}
           src="/logo.png"
           alt="Logo"
-          // MODIFIED: Increased width classes to make the logo bigger
           className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-2/3 md:w-1/3 z-10 pointer-events-none"
         />
 
-        {/* === Text Box Containers === */}
+        {/* Text Box Containers - No changes here */}
         <div ref={textRef1} className="absolute top-1/2 right-0 -translate-y-1/2 w-11/12 md:w-1/3">
-          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg" style={{
-              transform: 'rotateX(-36deg)', 
-              textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'
-            }}>
+          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg" style={{transform: 'rotateX(-36deg)', textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'}}>
             View Events
           </button>
         </div>
         <div ref={textRef2} className="absolute top-1/2 left-0 -translate-y-1/2 w-11/12 md:w-1/3">
-          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus: shadow-lg" style={{
-              transform: 'rotateX(-36deg)', 
-              textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'
-            }}>
+          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus: shadow-lg" style={{transform: 'rotateX(-36deg)', textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'}}>
             View Gallery
           </button>
         </div>
         <div ref={textRef3} className="absolute top-1/2 right-0 -translate-y-1/2 w-11/12 md:w-1/3">
-          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg" style={{
-              transform: 'translateY(-100%) rotateX(-36deg)', 
-              textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'
-            }}>
+          <button className="w-full p-8 text-3xl md:text-6xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg" style={{transform: 'translateY(-100%) rotateX(-36deg)', textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'}}>
             Our Team
           </button>
         </div>
         <div ref={textRef4} className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-11/12 md:w-1/2">
-          <button 
-            className="w-full p-8 text-4xl md:text-7xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg"
-            style={{
-              transform: 'rotateX(-36deg)', 
-              textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'
-            }}
-          >
+          <button className="w-full p-8 text-4xl md:text-7xl font-bold text-white text-center transition-transform duration-300 hover:scale-105 focus:shadow-lg" style={{transform: 'rotateX(-36deg)', textShadow: '1px 1px 0px #000, 2px 2px 0px #000, 3px 3px 0px #000, 4px 4px 0px #000, 5px 5px 10px rgba(0,0,0,0.5)'}}>
             Our Sponsors
           </button>
         </div>
-
+            
         {/* === MODIFIED NAVIGATION ARROWS === */}
-        {/* Up Arrow (Previous) */}
+        {/* Up Arrow (Next) */}
         {currentSection < labels.length - 1 &&(
           <div className="fixed top-8 left-1/2 -translate-x-1/2 z-20" style={{ transform: 'translateX(50%) rotateX(25deg)' }}>
-            <button onClick={handleNext} className="p-3 rounded-full">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-26 w-26" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="butt" strokeLinejoin="miter" strokeWidth={3} d="M4.5 12.75l7.5-7.5 7.5 7.5" /></svg>
+            <button onClick={() => navigateToSection(currentSection + 1)} className="p-3 rounded-full text-white">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-26 w-26" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="butt" strokeLinejoin="miter" strokeWidth={3} d="M4.5 12.75l7.5-7.5 7.5 7.5" />
+              </svg>
             </button>
           </div>
         )}
         
-        {/* Down Arrow (Next) */}
+        {/* Down Arrow (Previous) */}
         {currentSection > 0 &&(
           <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-20" style={{ transform: 'translateX(30%) rotateX(-25deg)' }}>
-             <button onClick={handlePrev} className="p-3 rounded-full">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-26 w-26" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="butt" strokeLinejoin="miter" strokeWidth={3} d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>
+            <button onClick={() => navigateToSection(currentSection - 1)} className="p-3 rounded-full text-white">
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-26 w-26" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="butt" strokeLinejoin="miter" strokeWidth={3} d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+              </svg>
             </button>
           </div>
         )}
